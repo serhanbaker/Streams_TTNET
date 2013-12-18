@@ -1,0 +1,166 @@
+use com.ibm.streams.db::ODBCSource ;
+
+composite Main
+{
+ type
+  BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO, rstring IL,
+   rstring ILCE, rstring MAHALLE, rstring MUDURLUK, float64 SANTRAL,
+   rstring DSLAM, rstring DSLAM_IP, float64 MPLS_ID, rstring MPLS_ADI,
+   float64 REDBACK_ID, rstring REDBACK_NAME, rstring SERVIS, rstring BOLGE_ADI,
+   rstring ADSL_SATIS_TARIHI, rstring PROD_OFR, rstring URUN_STATUSU,
+   rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+   rstring SON_NAKIL_TARIHI, rstring CUST_TP, rstring DSL_QUOTA,
+   float64 LIMITLI_LIMITSIZ, float64 IS_NDSL, rstring IPTV_NO,
+   rstring FIBER_MIGRATION_TARIHI, rstring CHURN_DATE,
+   rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI, float64 IS_VIP ;
+ graph
+  stream<BIG_DATA_DATAMART_TYPE> dbStream = ODBCSource()
+  {
+   param
+    connectionDocument : "./etc/connections.xml" ;
+    connection : "BIGDATALOOKUP" ;
+    access : "readFromSubscriberLookup" ;
+    initDelay : 5f ;
+  }
+
+  stream<int32 cdr_ADSL_NO, rstring cdr_CDR_TYPE, rstring cdr_REASON, float64 download>
+   CustomerStream = Beacon()
+  {
+   param
+    initDelay : 3.0 ;
+    period : 1.0 ;
+    iterations : 500 ;
+   output
+    CustomerStream : cdr_ADSL_NO = 1800000000 +(int32)(random() * 5000.0),
+     cdr_CDR_TYPE = "START", cdr_REASON = "USER_REQUEST" , download = (float64)(random() * 50000.0);
+  }
+
+  stream<BIG_DATA_DATAMART_TYPE, tuple<int32 cdr_ADSL_NO, rstring cdr_CDR_TYPE,
+   rstring cdr_REASON, float64 download>> AUGMENTEDRADIUSSTREAM = Join(dbStream as inPort0Alias ;
+   CustomerStream as inPort1Alias)
+  {
+   window
+    inPort0Alias : sliding, count(1), partitioned ;
+    inPort1Alias : sliding, count(0) ;
+   param
+    partitionByLHS : inPort0Alias.ADSL_NO ;
+    algorithm : rightOuter ;
+    equalityLHS : inPort0Alias.ADSL_NO ;
+    equalityRHS : inPort1Alias.cdr_ADSL_NO ;
+    //match : inPort0Alias.ADSL_NO == inPort0Alias.ADSL_NO;
+
+  }
+
+  () as FileSink_4 = FileSink(CUSTOMERMAPPER as MATCHRULE1)
+  {
+   param
+    file : "outDATA.txt" ;
+    format : csv ;
+  }
+
+  () as FileSink_5 = FileSink(MATCHRULE_out1 as MATCHRULE2)
+  {
+   param
+    file : "unmatchedDATA.txt" ;
+    format : csv ;
+  }
+
+  (stream<BIG_DATA_DATAMART_TYPE, tuple<int32 cdr_ADSL_NO,
+   rstring cdr_CDR_TYPE, rstring cdr_REASON, float64 download>> MATCHRULE ;
+   stream<BIG_DATA_DATAMART_TYPE, tuple<int32 cdr_ADSL_NO,
+   rstring cdr_CDR_TYPE, rstring cdr_REASON, float64 download>> MATCHRULE_out1) =
+   Split(AUGMENTEDRADIUSSTREAM)
+  {
+   param
+    index : ADSL_NO == 0 ? 1 : ADSL_NO != 0 ? 0 : - 1 ;
+   }
+
+  stream<MATCHRULE, tuple<int32 status>> CUSTOMERMAPPER = Functor(MATCHRULE)
+   {
+    logic
+     state :
+     {
+      mutable set<int32> custSet ;
+      mutable int32 internalStatus ;
+      mutable int32 sum ;
+     }
+
+     onTuple MATCHRULE :
+     {
+      internalStatus = 0 ;
+      insert(custSet, ADSL_NO) ;
+      if((cdr_CDR_TYPE == "START" || cdr_CDR_TYPE == "INTERIM") && !(ADSL_NO in
+       custSet))
+      {
+       internalStatus = 1 ;
+       insertM(custSet, ADSL_NO) ;
+      }
+
+      else if((cdr_CDR_TYPE == "STOP") &&(ADSL_NO in custSet))
+      {
+       internalStatus = - 1 ;
+       remove(custSet, ADSL_NO) ;
+      }
+
+      sum +=(int32) internalStatus ;
+     }
+
+     output
+      CUSTOMERMAPPER : status = internalStatus ;
+    }
+
+   () as SENDMATCHDATATOHDFS = FileSink(MATCHRULE)
+    {
+     param
+      file : "matchDataToHDFS" ;
+      format : csv ;
+    }
+
+   stream<MATCHRULE> CUSTOMERDATA = Functor(MATCHRULE)
+   {
+    logic
+     state :
+     {
+      mutable map<rstring,tuple<float64 FirstRecord,float64 Interm, float64 Stop, rstring BillCycleTimestamp>> custDataUsageMap ;
+     }
+
+     onTuple MATCHRULE :
+     {
+      if (! ((rstring)ADSL_NO in custDataUsageMap)){
+          if(cdr_CDR_TYPE == "START")
+             insertM(custDataUsageMap, (rstring)ADSL_NO,{ FirstRecord=0.0,Interm=0.0,Stop=0.0,BillCycleTimestamp=""});
+          else if(cdr_CDR_TYPE == "STOP")  
+             insertM(custDataUsageMap, (rstring)ADSL_NO,{ FirstRecord=0.0,Interm=0.0,Stop=download,BillCycleTimestamp=""});
+          else if(cdr_CDR_TYPE == "INTERM")  
+             insertM(custDataUsageMap, (rstring)ADSL_NO,{ FirstRecord=0.0,Interm=download,Stop=0.0,BillCycleTimestamp=""});
+      }else{
+          if (custDataUsageMap[(rstring)ADSL_NO].BillCycleTimestamp == ""){
+             if(cdr_CDR_TYPE == "START"){
+             
+             }else if(cdr_CDR_TYPE == "STOP"){
+                 custDataUsageMap[(rstring)ADSL_NO].Stop += download;
+                 custDataUsageMap[(rstring)ADSL_NO].Interm = 0.0;
+             }
+           else if(cdr_CDR_TYPE == "INTERM")  
+              custDataUsageMap[(rstring)ADSL_NO].Interm += download;
+          }else{
+             custDataUsageMap[(rstring)ADSL_NO].BillCycleTimestamp = "";
+          
+             if(cdr_CDR_TYPE == "START"){
+                 custDataUsageMap[(rstring)ADSL_NO].FirstRecord = 0.0;
+                 custDataUsageMap[(rstring)ADSL_NO].Stop = 0.0;
+                 custDataUsageMap[(rstring)ADSL_NO].Interm = 0.0;
+             }else if(cdr_CDR_TYPE == "STOP"){
+                 custDataUsageMap[(rstring)ADSL_NO].Stop = download;
+                 custDataUsageMap[(rstring)ADSL_NO].Interm = 0.0;
+             }
+           else if(cdr_CDR_TYPE == "INTERM")  
+              custDataUsageMap[(rstring)ADSL_NO].Interm += download;
+          }
+      }
+      //CHECK ALARM
+     }
+
+    }
+
+  }

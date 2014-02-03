@@ -1,0 +1,79 @@
+namespace application;
+
+composite TTNetSinkCognos {
+
+	type
+		RadiusFormatted = 
+			rstring cdr_username, 
+			int32 cdr_adsl_no,
+			int8 cdr_acct_status_type, 
+			timestamp cdr_event_timestamp,
+			int8 cdr_acct_status_type_II, 
+			int64 cdr_cdownload, 
+			int64 cdr_cupload,
+			int64 cdr_ddownload, 
+			int64 cdr_dupload, 
+			int8 cdr_dactive_subs, 
+			rstring R5001, 	// SERVER IP
+			int64   R5002, 	// SERVER PORT
+			rstring R5003, 	// CLIENT IP
+			int64   R5004, 	// CLIENT PORT
+			int64   R5005, 	// INITIATING SIDE
+			int64   R5006, 	// RADIUS PACKET CODE
+			int64	R5007, 	// RADIUS ID
+			rstring R1, 	// User-Name
+			int64	R40,	// Acct-Status-Type
+			rstring R20,	// Radius NAS-Identifier
+			rstring R4,		// NAS-IP-Address
+			rstring R8,		// Framed-IP-Address
+			rstring R9,		// Framed-IP-Netmask
+			rstring R48,	// Acct-Output-Packets
+			rstring R44,	// Acct-Session-Id
+			rstring R31,	// Calling-Station-Id
+			rstring R90,	// Tunnel Client Authentication ID
+			rstring R5200,	// QoS-Metering-Profile-Name-Down
+			rstring R5201,	// Forward-Policy
+			int64	R46,	// Acct-Session-Time
+			int64	R41,	// Acct-Delay-Time
+			int64	R49,	// Acct-Terminate-Cause
+			int64	R52,	// UPLOAD / Accounting Input Giga	?
+			int64	R51,	// DOWNLOAD / Acct-Link-Count ?
+			int64	R55,	// Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+			rstring R32	;	// NAS Identifier
+			BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO, rstring SERVIS,
+    		rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID, rstring URUN_STATUSU, rstring CUST_TP,int32 DSL_QUOTA,int32 LIMITLI_LIMITSIZ,
+    		int32 IS_NDSL,rstring CHURN_DATE,int32 IS_VIP, int32 IS_VIP_R, int32 IL_ID, 
+			int32 ILCE_ID, int32 MAHALLE_ID,  rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL,
+    		int32 DSLAM, rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI,
+			int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI,  int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI, 
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI, rstring FATURA_GUNU ;
+			
+					
+	graph
+		(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted>  MatchedCDRStream) as Import_1 = Import()
+		{
+			param
+				subscription : kind == "EnrichedCDR" && matchtype == "Matched" ;
+		}
+
+		(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted>  UnMatchedCDRStream) as Import_2 = Import()
+		{
+			param
+				subscription : kind == "EnrichedCDR" && matchtype == "UnMatched" ;
+		}
+
+		() as FileSink_3 = FileSink(MatchedCDRStream)
+		{
+			param
+				file : "deneme.txt" ;
+		}
+
+		() as FileSink_4 = FileSink(UnMatchedCDRStream)
+		{
+			param
+				file : "deneme2.txt" ;
+		}
+		
+}

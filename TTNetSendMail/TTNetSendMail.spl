@@ -1,0 +1,32 @@
+namespace application ;
+
+use com.ibm.streamsx.mail::SendMail ;
+
+composite TTNetSendMail
+{
+	graph
+
+		() as sendVIPAlertEmail = SendMail(VIPAlertStream)
+		{
+			param
+				authentication : "TLS" ;
+				hostname : "smtp.ttnet.com.tr" ;
+				hostport : 587 ;
+				batch : 1 ;
+				to : "vipalerts@ttnet.com.tr" ;
+				username : "agent@ttnet.com.tr" ;
+				password : "mypassword" ;
+				subject : "VIP müşterimiz üst üste stop problemi almakta : ", "cdr_adsl_no" ;
+				content : 
+				"Merhaba,\n\n Son 3 dakika içerisinde ", "cdr_adsl_no",
+				" ADSL nolu VIP müşterimiz " , "filteredVipCount" ,
+				 " kez stop eventi deneyimlemiştir. \n-----------------------------\n" + "\n\n" ;
+		}
+
+		(stream<int32 cdr_adsl_no, int32 filteredVipCount> VIPAlertStream) as VIPAlerts = Import()
+		{
+			param
+				subscription : kind == "Mail" && matchtype == "VIPAlert" ;
+		}
+
+}

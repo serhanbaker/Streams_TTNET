@@ -1,0 +1,681 @@
+namespace application ;
+
+use com.ibm.ssb.parsers.json::* ;
+public stateful rstring formattedTime()
+{
+	timestamp t = getTimestamp() ;
+	mutable Sys.tm timetuple = { } ;
+	time(t, timetuple) ;
+	return strftime(timetuple, "%Y-%m-%d %H:%M:%S") ;
+}
+/**
+ * Listens the TCP port (1234) for JSON formatted radius packages, after applying the core business logic, it exports the data in a standard format so that it can be processed together with other CDR sources.
+ * 
+ * Each start record received in Acct-Status-Type indicates that the subscriber has started a session 
+ * and each stop record received in Acct-Status-Type indicates that the subscriber has ended a session. 
+ * 
+ * The Acct-Terminate-Cause field received within the CDR package includes information on why this 
+ * transaction has occurred. Lost-Carrier means that the session has ended (cut off) against the subscriber’s will,
+ * user-request means that the subscriber has ended the session willingly (by means of switching off the modem, 
+ * restarting, etc.), and if it is empty, it means that there is an interim record. 
+ * 
+ * Although Turk Telekom states that these descriptions may not be always applicable and accurate, 
+ * the accuracy of such information can be clarified after analyzing the data.
+ * 
+ * More info can be found at;
+ * * http://www.ietf.org/rfc/rfc2865.txt
+ * * http://www.ietf.org/rfc/rfc2866.txt
+ * 
+ * RADIUS Codes presented in RFC document is given below. It is expected that libpcap based Radius package
+ * listener will filter the relevant Accounting packages and forward them in JSON format, as key value pairs 
+ * to the TTNetRadiusIngest application running on IBM InfoSphere Streams. 
+ *
+ * 
+ * * 1	Access-Request
+ * * 2	Access-Accept
+ * * 3	Access-Reject
+ * * 4	Accounting-Request
+ * * 5	Accounting-Response
+ * * 11	Access-Challenge
+ * * 12	Status-Server (experimental)
+ * * 13	Status-Client (experimental)
+ * * 255	Reserved
+ *
+ * Possible Radius attribute value pairs for TTNet are as follows;
+ * 
+ * 
+ * * R1      User-Name
+ * * R2      User-Password
+ * * R3      CHAP-Password
+ * * R4      NAS-IP-Address
+ * * R5      NAS-Port
+ * * R6      Service-Type
+ * * R7      Framed-Protocol
+ * * R8      Framed-IP-Address
+ * * R9      Framed-IP-Netmask
+ * * R10      Framed-Routing
+ * * R11      Filter-Id
+ * * R12      Framed-MTU
+ * * R13      Framed-Compression
+ * * R14      Login-IP-Host
+ * * R15      Login-Service
+ * * R16      Login-TCP-Port
+ * * R17      (unassigned)
+ * * R18      Reply-Message
+ * * R19      Callback-Number
+ * * R20      Callback-Id 
+ * * R21      (unassigned)
+ * * R22      Framed-Route
+ * * R23      Framed-IPX-Network
+ * * R24      State
+ * * R25      Class
+ * * R26      Vendor-Specific
+ * * R27      Session-Timeout
+ * * R28      Idle-Timeout
+ * * R29      Termination-Action
+ * * R30      Called-Station-Id
+ * * R31      Calling-Station-Id
+ * * R32      NAS-Identifier
+ * * R33      Proxy-State
+ * * R34      Login-LAT-Service
+ * * R35      Login-LAT-Node
+ * * R36      Login-LAT-Group
+ * * R37      Framed-AppleTalk-Link
+ * * R38      Framed-AppleTalk-Network
+ * * R39      Framed-AppleTalk-Zone
+ * * R40      Acct-Status-Type
+ * * R41      Acct-Delay-Time
+ * * R42      Acct-Input-Octets
+ * * R43      Acct-Output-Octets
+ * * R44      Acct-Session-Id
+ * * R45      Acct-Authentic
+ * * R46      Acct-Session-Time
+ * * R47      Acct-Input-Packets
+ * * R48      Acct-Output-Packets
+ * * R49      Acct-Terminate-Cause
+ * * R50      Acct-Multi-Session-Id
+ * * R51      Acct-Link-Count       
+ * * R52      Accounting Input Giga	
+ * * R53      Accounting Output Giga	
+ * * R55      Event Timestamp
+ * * R60      CHAP-Challenge
+ * * R61      NAS-Port-Type
+ * * R62      Port-Limit
+ * * R63      Login-LAT-Port
+ * * R64      Tunnel Type
+ * * R65      Tunnel Medium
+ * * R66      Tunnel Client End
+ * * R67      Tunnel Server End
+ * * R68      Accounting Tunnel connect
+ * * R69      Tunnel Password
+ * * R70      ARAP Password
+ * * R71      ARAP Feature
+ * * R72      ARAP Zone Acces
+ * * R73      ARAP Security
+ * * R74      ARAP Security Data
+ * * R75      Password Retry
+ * * R76      Prompt
+ * * R77      Connect Info
+ * * R78      Config Token
+ * * R79      EAP Message
+ * * R80      Message Authentication
+ * * R81      Tunnel Private Group
+ * * R82      Tunnel Assigned ID
+ * * R83      Tunnel Preference
+ * * R84      ARAP Challenge Response
+ * * R85      Accounting Interim Interval
+ * * R86      Accounting Tunnel packets lost
+ * * R87      NAS Port ID
+ * * R88      Framed Pool
+ * * R89      Unassigned
+ * * R90      Tunnel Client Authentication ID
+ * * R91      Tunnel Server Authentication ID
+ *
+ * Possible Cisco Radius attribute value pairs for TTNet are as follows;
+ * 
+ * 
+  * * 	SERVER_IP 
+  * * 	SERVER_PORT 
+  * * 	CLIENT_IP 
+  * * 	CLIENT_PORT 
+  * * 	INITIATING_SIDE 
+  * * 	RADIUS_PACKET_CODE 
+  * * 	RADIUS_ID
+  * * C1      Username
+  * * C2      Acct Status Type
+  * * C3      Radius NAS-Identifier
+  * * C4      NAS IP address
+  * * C5      IP Address
+  * * C6      Framed IP Netmask
+  * * C7      Account output packets
+  * * C8      Acct-Session-Id
+  * * C9      Calling Station ID
+  * * C10      Tunnel-Client-Auth-Id
+  * * C11      QoS-Metering-Profile-Name-Down
+  * * C12      Forward-Policy
+  * * C13      Acct_Session_Time
+  * * C14      Acct-Delay-Time
+  * * C15      Acct Terminate Cause
+  * * C16      Upload
+  * * C17      Download
+  * * C18      Time Stamp  
+ * 
+ * Acct Status Type standard values;
+ * 
+  * * 1      Start
+  * * 2      Stop
+  * * 3      Interim-Update
+  * * 7      Accounting-On
+  * * 8      Accounting-Off
+  * * 9-14   Reserved for Tunnel Accounting
+  * * 15      Reserved for Failed
+ * 
+ * 
+ * Acct-Terminate-Cause Accounting Attribute standard values;
+ * 
+  * * 1       User Request
+  * * 2       Lost Carrier
+  * * 3       Lost Service
+  * * 4       Idle Timeout
+  * * 5       Session Timeout
+  * * 6       Admin Reset
+  * * 7       Admin Reboot
+  * * 8       Port Error
+  * * 9       NAS Error
+  * * 10      NAS Request
+  * * 11      NAS Reboot
+  * * 12      Port Unneeded
+  * * 13      Port Preempted
+  * * 14      Port Suspended
+  * * 15      Service Unavailable
+  * * 16      Callback
+  * * 17      User Error
+  * * 18      Host Request
+ *
+* */
+composite SubGraphRadiusIngest(input In ; output FormattedCDRStream)
+{
+	type
+		RadiusFormatted = rstring cdr_username, int32 cdr_adsl_no,
+			int8 cdr_acct_status_type, rstring cdr_event_timestamp,
+			int8 cdr_acct_status_type_II, int64 cdr_cdownload, int64 cdr_cupload,
+			int64 cdr_ddownload, int64 cdr_dupload, int8 cdr_dactive_subs,
+			rstring R5001, // SERVER IP
+		int64 R5002, // SERVER PORT
+		rstring R5003, // CLIENT IP
+		int64 R5004, // CLIENT PORT
+		int64 R5005, // INITIATING SIDE
+		int64 R5006, // RADIUS PACKET CODE
+		int64 R5007, // RADIUS ID
+		rstring R1, // User-Name
+		int64 R40, // Acct-Status-Type
+		rstring R20, // Radius NAS-Identifier
+		rstring R4, // NAS-IP-Address
+		rstring R8, // Framed-IP-Address
+		rstring R9, // Framed-IP-Netmask
+		rstring R48, // Acct-Output-Packets
+		rstring R44, // Acct-Session-Id
+		rstring R31, // Calling-Station-Id
+		rstring R90, // Tunnel Client Authentication ID
+		rstring R5200, // QoS-Metering-Profile-Name-Down
+		rstring R5201, // Forward-Policy
+		int64 R46, // Acct-Session-Time
+		int64 R41, // Acct-Delay-Time
+		int64 R49, // Acct-Terminate-Cause
+		int64 R52, // UPLOAD / Accounting Input Giga	?
+		int64 R51, // DOWNLOAD / Acct-Link-Count ?
+		int64 R55, // Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+		rstring R32 ; // NAS Identifier
+		BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO,
+			rstring SERVIS, rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID,
+			rstring URUN_STATUSU, rstring CUST_TP, int32 DSL_QUOTA,
+			int32 LIMITLI_LIMITSIZ, int32 IS_NDSL, rstring CHURN_DATE, int32 IS_VIP,
+			int32 IS_VIP_R, int32 IL_ID, int32 ILCE_ID, int32 MAHALLE_ID,
+			rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL, int32 DSLAM,
+			rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI, int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI, int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI,
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI,
+			rstring FATURA_GUNU ;
+	graph
+		(stream<rstring myJSONOutput2> TCPSourceRadiusStreamReplacement) as
+			EscapeReplace = Functor(In)
+		{
+			output
+				TCPSourceRadiusStreamReplacement : myJSONOutput2 =
+					regexReplacePerl(regexReplacePerl(regexReplacePerl(myJSONOutput, '\\\\:',
+					':', true), '\\\\', '\\\\\\\\', true), "\u0000", ' ', true) ;
+		}
+
+		stream<RadiusFormatted> CDRTupleStream =
+			JSONToTuple(TCPSourceRadiusStreamReplacement)
+		{
+			param
+				continueOnError : true ;
+		}
+
+		(stream<RadiusFormatted> FormattedCDRStream) as CoreBusinessLogicForRadius =
+			Custom(CDRTupleStream)
+		{
+			logic
+				onTuple CDRTupleStream :
+				{
+					CDRTupleStream.cdr_username =(rstring)(1800000000ul +(((uint64)(random() *
+						5000000.0)) * 20ul)) ;
+						//cdr_username = R1, 
+					CDRTupleStream.cdr_adsl_no = 0w ;
+					CDRTupleStream.cdr_acct_status_type =(int8) R40 ;
+					// Enumeration is in-line with the Radius standard codes for R40
+					CDRTupleStream.cdr_event_timestamp = formattedTime() ; //getTimestamp(), 
+					CDRTupleStream.cdr_acct_status_type_II =(int8)(R40 in { 1l, 2l, 3l }
+						?(int8) R40 : 0b) ;
+						// Enumeration; 1-Start,2-Stop,3-Interim,0-Other,4-InterimWithMissingStart,5-StopWithMissingStart,6-StartWithMissingStop
+					//cdr_cdownload = R51, 
+					CDRTupleStream.cdr_cdownload =(int64)(random() * 100.0) ;
+					//cdr_cupload = R52, 
+					CDRTupleStream.cdr_cupload =(int64)(random() * 100.0) ;
+					CDRTupleStream.cdr_ddownload = 0l ;
+					CDRTupleStream.cdr_dupload = 0l ;
+					CDRTupleStream.cdr_dactive_subs = 0b ;
+					submit(CDRTupleStream, FormattedCDRStream) ;
+				}
+
+		}
+
+}
+
+composite SubGraphEnrich(input InSubscriber, InCDR ; output EnrichedWithDownloadStream)
+{
+	type
+		RadiusFormatted = rstring cdr_username, int32 cdr_adsl_no,
+			int8 cdr_acct_status_type, rstring cdr_event_timestamp,
+			int8 cdr_acct_status_type_II, int64 cdr_cdownload, int64 cdr_cupload,
+			int64 cdr_ddownload, int64 cdr_dupload, int8 cdr_dactive_subs,
+			rstring R5001, // SERVER IP
+		int64 R5002, // SERVER PORT
+		rstring R5003, // CLIENT IP
+		int64 R5004, // CLIENT PORT
+		int64 R5005, // INITIATING SIDE
+		int64 R5006, // RADIUS PACKET CODE
+		int64 R5007, // RADIUS ID
+		rstring R1, // User-Name
+		int64 R40, // Acct-Status-Type
+		rstring R20, // Radius NAS-Identifier
+		rstring R4, // NAS-IP-Address
+		rstring R8, // Framed-IP-Address
+		rstring R9, // Framed-IP-Netmask
+		rstring R48, // Acct-Output-Packets
+		rstring R44, // Acct-Session-Id
+		rstring R31, // Calling-Station-Id
+		rstring R90, // Tunnel Client Authentication ID
+		rstring R5200, // QoS-Metering-Profile-Name-Down
+		rstring R5201, // Forward-Policy
+		int64 R46, // Acct-Session-Time
+		int64 R41, // Acct-Delay-Time
+		int64 R49, // Acct-Terminate-Cause
+		int64 R52, // UPLOAD / Accounting Input Giga	?
+		int64 R51, // DOWNLOAD / Acct-Link-Count ?
+		int64 R55, // Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+		rstring R32 ; // NAS Identifier
+		BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO,
+			rstring SERVIS, rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID,
+			rstring URUN_STATUSU, rstring CUST_TP, int32 DSL_QUOTA,
+			int32 LIMITLI_LIMITSIZ, int32 IS_NDSL, rstring CHURN_DATE, int32 IS_VIP,
+			int32 IS_VIP_R, int32 IL_ID, int32 ILCE_ID, int32 MAHALLE_ID,
+			rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL, int32 DSLAM,
+			rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI, int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI, int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI,
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI,
+			rstring FATURA_GUNU ;
+	graph
+		stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> EnrichedCDRStream =
+			Join(InSubscriber as inPort0Alias ; InCDR as inPort1Alias)
+		{
+			window
+				inPort0Alias : sliding, count(1), partitioned ;
+				inPort1Alias : sliding, count(0) ;
+			param
+				partitionByLHS : inPort0Alias.KULLANICI_KIMLIK ;
+				algorithm : rightOuter ;
+				equalityLHS : inPort0Alias.KULLANICI_KIMLIK ;
+				equalityRHS : inPort1Alias.cdr_username ;
+			output
+				EnrichedCDRStream : cdr_adsl_no = ADSL_NO ;
+		}
+
+		stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> EnrichedWithSubsCountStream =
+			Custom(EnrichedCDRStream as inPort0Alias)
+		{
+			logic
+				state :
+				{
+					mutable set<int32> custSet ;
+					mutable int8 new_cdr_acct_status_type_II ;
+					mutable int8 new_cdr_dactive_subs ;
+					// Enumeration; 
+					// 1-Start,2-Stop,3-Interim,0-Other,
+					// 4-InterimWithMissingStart,5-StopWithMissingStartAndInterims,6-StartWithMissingStop
+
+				}
+
+				onTuple inPort0Alias :
+				{
+					new_cdr_acct_status_type_II = cdr_acct_status_type_II ;
+					new_cdr_dactive_subs = 0b ;
+					if(new_cdr_acct_status_type_II == 1b)
+					{
+						if(ADSL_NO in custSet)
+						{
+							new_cdr_dactive_subs = 0b ;
+							new_cdr_acct_status_type_II = 6b ; // 6-StartWithMissingStop
+
+						}
+
+						else
+						{
+							new_cdr_dactive_subs = 1b ;
+							insertM(custSet, ADSL_NO) ;
+						}
+
+					}
+
+					else if(cdr_acct_status_type_II == 2b)
+					{
+						if(ADSL_NO in custSet)
+						{
+							new_cdr_dactive_subs = - 1b ;
+							removeM(custSet, ADSL_NO) ;
+						}
+
+						else
+						{
+							new_cdr_dactive_subs = 0b ;
+							new_cdr_acct_status_type_II = 5b ; // 5-StopWithMissingStartAndInterims
+
+						}
+
+					}
+
+					else if(cdr_acct_status_type_II == 3b)
+					{
+						if(ADSL_NO in custSet)
+						{
+							new_cdr_dactive_subs = 0b ;
+						}
+
+						else
+						{
+							new_cdr_dactive_subs = 1b ;
+							new_cdr_acct_status_type_II = 4b ; // 4-InterimWithMissingStart
+							insertM(custSet, ADSL_NO) ;
+						}
+
+					}
+
+				inPort0Alias.cdr_acct_status_type_II = new_cdr_acct_status_type_II;
+				inPort0Alias.cdr_dactive_subs = new_cdr_dactive_subs ;
+				submit(inPort0Alias, EnrichedWithSubsCountStream) ;
+				}
+
+			}
+
+		stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> EnrichedWithDownloadStream =
+				Custom(EnrichedWithSubsCountStream)
+			{
+				logic
+					state :
+					{
+						mutable map<int32, tuple<int64 lastdownload, int64 lastupload>> total ;
+						mutable int64 new_ddownload ;
+						mutable int64 new_dupload ;
+					}
+
+					onTuple EnrichedWithSubsCountStream :
+					{
+						new_ddownload = 0l ;
+						new_dupload = 0l ;
+						// Enumeration; 
+						// 1-Start,2-Stop,3-Interim,0-Other,
+						// 4-InterimWithMissingStart,5-StopWithMissingStartAndInterims,6-StartWithMissingStop
+						if(cdr_adsl_no > 0)
+						{
+							if((cdr_acct_status_type_II == 1b) ||(cdr_acct_status_type_II == 6b)) //START
+
+							{
+								if(!(cdr_adsl_no in total))
+								{
+									insertM(total, cdr_adsl_no, { lastdownload = cdr_cdownload, lastupload
+										= cdr_cupload }) ;
+								}
+
+								else
+								{
+									total [ cdr_adsl_no ].lastdownload = cdr_cdownload ;
+									total [ cdr_adsl_no ].lastupload = cdr_cupload ;
+								}
+
+							}
+
+							if(cdr_adsl_no in total)
+							{
+								if((cdr_acct_status_type_II == 3b) ||(cdr_acct_status_type_II == 4b)) //INTERIM
+
+								{
+									new_ddownload = cdr_cdownload - total [ cdr_adsl_no ].lastdownload ;
+									new_dupload = cdr_cupload - total [ cdr_adsl_no ].lastupload ;
+									total [ cdr_adsl_no ].lastdownload = cdr_cdownload ;
+									total [ cdr_adsl_no ].lastupload = cdr_cupload ;
+								}
+
+								else if((cdr_acct_status_type_II == 2b) ||(cdr_acct_status_type_II ==
+									5b)) //STOP
+
+								{
+									new_ddownload = cdr_cdownload - total [ cdr_adsl_no ].lastdownload ;
+									new_dupload = cdr_cupload - total [ cdr_adsl_no ].lastupload ;
+									total [ cdr_adsl_no ].lastdownload = 0l ;
+									total [ cdr_adsl_no ].lastupload = 0l ;
+								}
+
+							}
+
+							else
+							{
+								if((cdr_acct_status_type_II == 3b) ||(cdr_acct_status_type_II == 4b)) //INTERIM
+
+								{
+									new_ddownload = cdr_cdownload ;
+									new_dupload = cdr_cupload ;
+									insertM(total, cdr_adsl_no, { lastdownload = cdr_cdownload, lastupload
+										= cdr_cupload }) ;
+								}
+
+								else if((cdr_acct_status_type_II == 2b) ||(cdr_acct_status_type_II ==
+									5b)) //STOP
+
+								{
+									new_ddownload = cdr_cdownload ;
+									new_dupload = cdr_cupload ;
+									insertM(total, cdr_adsl_no, { lastdownload = 0l, lastupload = 0l }) ;
+								}
+
+							}
+
+						}
+					
+				EnrichedWithSubsCountStream.cdr_ddownload = new_ddownload;
+				EnrichedWithSubsCountStream.cdr_dupload = new_dupload ;
+				submit(EnrichedWithSubsCountStream, EnrichedWithDownloadStream) ;
+			}
+		}
+}
+
+		composite TTNetRadiusIngest
+		{
+			type
+				RadiusFormatted = rstring cdr_username, int32 cdr_adsl_no,
+					int8 cdr_acct_status_type, rstring cdr_event_timestamp,
+					int8 cdr_acct_status_type_II, int64 cdr_cdownload, int64 cdr_cupload,
+					int64 cdr_ddownload, int64 cdr_dupload, int8 cdr_dactive_subs,
+					rstring R5001, // SERVER IP
+				int64 R5002, // SERVER PORT
+				rstring R5003, // CLIENT IP
+				int64 R5004, // CLIENT PORT
+				int64 R5005, // INITIATING SIDE
+				int64 R5006, // RADIUS PACKET CODE
+				int64 R5007, // RADIUS ID
+				rstring R1, // User-Name
+				int64 R40, // Acct-Status-Type
+				rstring R20, // Radius NAS-Identifier
+				rstring R4, // NAS-IP-Address
+				rstring R8, // Framed-IP-Address
+				rstring R9, // Framed-IP-Netmask
+				rstring R48, // Acct-Output-Packets
+				rstring R44, // Acct-Session-Id
+				rstring R31, // Calling-Station-Id
+				rstring R90, // Tunnel Client Authentication ID
+				rstring R5200, // QoS-Metering-Profile-Name-Down
+				rstring R5201, // Forward-Policy
+				int64 R46, // Acct-Session-Time
+				int64 R41, // Acct-Delay-Time
+				int64 R49, // Acct-Terminate-Cause
+				int64 R52, // UPLOAD / Accounting Input Giga	?
+				int64 R51, // DOWNLOAD / Acct-Link-Count ?
+				int64 R55, // Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+				rstring R32 ; // NAS Identifier
+				BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO,
+					rstring SERVIS, rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID,
+					rstring URUN_STATUSU, rstring CUST_TP, int32 DSL_QUOTA,
+					int32 LIMITLI_LIMITSIZ, int32 IS_NDSL, rstring CHURN_DATE, int32 IS_VIP,
+					int32 IS_VIP_R, int32 IL_ID, int32 ILCE_ID, int32 MAHALLE_ID,
+					rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL, int32 DSLAM,
+					rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI, int32 REDBACK_ID,
+					rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+					rstring SON_NAKIL_TARIHI, int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI,
+					rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI,
+					rstring FATURA_GUNU ;
+			graph
+				(stream<rstring myJSONOutput> TCPSourceRadiusStream) as
+					TCPSourceforRadius = TCPSource()
+				{
+					param
+						role : server ;
+						format : line ;
+						port : 1234u ;
+						reconnectionPolicy : InfiniteRetry ;
+				}
+
+				(stream<rstring myJSONOutput> Out1 ; stream<rstring myJSONOutput> Out2 ;
+					stream<rstring myJSONOutput> Out3 ; stream<rstring myJSONOutput> Out4) =
+					ThreadedSplit(TCPSourceRadiusStream)
+				{
+					param
+						bufferSize : 5000000u ;
+				}
+
+				stream<RadiusFormatted> SubGraphOut1 = SubGraphRadiusIngest(Out1)
+				{
+				}
+
+				stream<RadiusFormatted> SubGraphOut2 = SubGraphRadiusIngest(Out2)
+				{
+				}
+
+				stream<RadiusFormatted> SubGraphOut3 = SubGraphRadiusIngest(Out3)
+				{
+				}
+
+				stream<RadiusFormatted> SubGraphOut4 = SubGraphRadiusIngest(Out4)
+				{
+				}
+
+				(stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream) as
+					SubscriberImport = Import()
+				{
+					param
+						subscription : kind == "SubscriberLookup" ;
+				}
+
+				   (stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream_out0 ;
+					stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream_out1 ;
+					stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream_out2 ;
+					stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream_out3 ;
+					stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream_out4) as
+					Split_SubscriberLookup = Split(SubscriberLookupSourceStream)
+					{
+						param
+							index : toCharacterCode(length(KULLANICI_KIMLIK) > 2 ?(rstring)
+								KULLANICI_KIMLIK [ 2 ] : " ") ;
+					}
+
+				   (stream<RadiusFormatted> CDRStream_out0 ;
+					stream<RadiusFormatted> CDRStream_out1 ;
+					stream<RadiusFormatted> CDRStream_out2 ;
+					stream<RadiusFormatted> CDRStream_out3 ;
+					stream<RadiusFormatted> CDRStream_out4) as
+					Split_CDR = Split(SubGraphOut1,SubGraphOut2,SubGraphOut3,SubGraphOut4)
+					{
+						param
+							index : toCharacterCode(length(cdr_username) > 2 ?(rstring) cdr_username [ 2 ] : " ") ;
+					}
+					
+				stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> SubGraphEnrichOut0 = SubGraphEnrich(SubscriberLookupSourceStream_out0;CDRStream_out0)
+				{
+				}
+				stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> SubGraphEnrichOut1 = SubGraphEnrich(SubscriberLookupSourceStream_out1;CDRStream_out1)
+				{
+				}
+				stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> SubGraphEnrichOut2 = SubGraphEnrich(SubscriberLookupSourceStream_out2;CDRStream_out2)
+				{
+				}
+				stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> SubGraphEnrichOut3 = SubGraphEnrich(SubscriberLookupSourceStream_out3;CDRStream_out3)
+				{
+				}
+				stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> SubGraphEnrichOut4 = SubGraphEnrich(SubscriberLookupSourceStream_out4;CDRStream_out4)
+				{
+				}
+
+		(stream<int64 Tipi, int32 ToplamPaket> TipBazindaToplam) as Aggregate_3 =
+			Aggregate(SubGraphEnrichOut0,SubGraphEnrichOut1,SubGraphEnrichOut2,SubGraphEnrichOut3,SubGraphEnrichOut4 as inPort0Alias)
+		{
+			window
+				inPort0Alias : tumbling, time(1) ;
+			param
+				groupBy : R40 ;
+			output
+				TipBazindaToplam : Tipi = R40, ToplamPaket = Count() ;
+		}
+		
+		(stream<int32 ToplamPaket> Toplam) as Aggregate_4 =
+			Aggregate(SubGraphEnrichOut0,SubGraphEnrichOut1,SubGraphEnrichOut2,SubGraphEnrichOut3,SubGraphEnrichOut4 as inPort0Alias)
+		{
+			window
+				inPort0Alias : tumbling, time(1) ;
+			output
+				Toplam : ToplamPaket = Count() ;
+		}
+		
+				(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> MatchedCDRStream ;
+					stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> UnMatchedCDRStream) as
+					SplitByMatch = Split(SubGraphEnrichOut0,SubGraphEnrichOut1,SubGraphEnrichOut2,SubGraphEnrichOut3,SubGraphEnrichOut4)
+				{
+					param
+						index : ADSL_NO == 0 ? 1 : ADSL_NO != 0 ? 0 : - 1 ;
+					}
+
+				() as ExportMatchedCDR = Export(MatchedCDRStream)
+					{
+						param
+							properties : { kind = "EnrichedCDR", matchtype = "Matched" } ;
+					}
+
+				() as ExportUnmatchedCDR = Export(UnMatchedCDRStream)
+					{
+						param
+							properties : { kind = "EnrichedCDR", matchtype = "UnMatched" } ;
+					}
+
+				
+
+			}

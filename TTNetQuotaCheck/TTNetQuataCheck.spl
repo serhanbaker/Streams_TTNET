@@ -1,0 +1,280 @@
+namespace application ;
+
+use com.ibm.streams.db::ODBCEnrich ;
+
+composite TTNetQuataCheck
+{
+/*
+ * TOTAL DOWNLOAD is the calculation of the total download amount of a subscriber
+ * from the start of the month until now. Stop and Interim download information 
+ * indicates cumulated download/upload amount of the subscriber from the last
+ * start transaction until then. 
+ * This should be considered in calculating the total quota usage.
+ * The service call to be communicated when the total download amount calculated on a subscriber basis reaches 80% of the quota amount on a subscriber basis (not unlimited). 
+ * The service call to be communicated when the subscriber reaches 100% of its total quota within the month for its package
+ * The service call to be communicated when the subscriber reaches 80% of its total AKN quota within the month for its package
+ * The service call to be communicated when the subscriber reaches 100% of its total AKN quota within the month for its package
+ * 
+ */
+	type
+		RadiusFormatted = 
+			rstring cdr_username, 
+			int32 cdr_adsl_no,
+			int8 cdr_acct_status_type, 
+			rstring cdr_event_timestamp,
+			int8 cdr_acct_status_type_II, 
+			int64 cdr_cdownload, 
+			int64 cdr_cupload,
+			int64 cdr_ddownload, 
+			int64 cdr_dupload, 
+			int8 cdr_dactive_subs, 
+			rstring R5001, 	// SERVER IP
+			int64   R5002, 	// SERVER PORT
+			rstring R5003, 	// CLIENT IP
+			int64   R5004, 	// CLIENT PORT
+			int64   R5005, 	// INITIATING SIDE
+			int64   R5006, 	// RADIUS PACKET CODE
+			int64	R5007, 	// RADIUS ID
+			rstring R1, 	// User-Name
+			int64	R40,	// Acct-Status-Type
+			rstring R20,	// Radius NAS-Identifier
+			rstring R4,		// NAS-IP-Address
+			rstring R8,		// Framed-IP-Address
+			rstring R9,		// Framed-IP-Netmask
+			rstring R48,	// Acct-Output-Packets
+			rstring R44,	// Acct-Session-Id
+			rstring R31,	// Calling-Station-Id
+			rstring R90,	// Tunnel Client Authentication ID
+			rstring R5200,	// QoS-Metering-Profile-Name-Down
+			rstring R5201,	// Forward-Policy
+			int64	R46,	// Acct-Session-Time
+			int64	R41,	// Acct-Delay-Time
+			int64	R49,	// Acct-Terminate-Cause
+			int64	R52,	// UPLOAD / Accounting Input Giga	?
+			int64	R51,	// DOWNLOAD / Acct-Link-Count ?
+			int64	R55,	// Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+			rstring R32	;	// NAS Identifier
+		BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO,
+			rstring SERVIS, rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID,
+			rstring URUN_STATUSU, rstring CUST_TP, int32 DSL_QUOTA,
+			int32 LIMITLI_LIMITSIZ, int32 IS_NDSL, rstring CHURN_DATE, int32 IS_VIP,
+			int32 IS_VIP_R, int32 IL_ID, int32 ILCE_ID, int32 MAHALLE_ID,
+			rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL, int32 DSLAM,
+			rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI, int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI, int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI,
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI,
+			rstring FATURA_GUNU ;
+	graph
+		(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> MatchedCDRStream) as
+			Import_1 = Import()
+		{
+			param
+				subscription : kind == "EnrichedCDR" && matchtype == "Matched" ;
+		}
+
+		stream<int32 PROD_OFR_ID, int32 AKN> AKNLookupSourceStream =
+			ODBCEnrich(ForceRefreshStream)
+		{
+			param
+				connection : "BIGDATALOOKUP" ;
+				access : "getAKNInfoforProducts" ;
+				connectionDocument : "./etc/connections.xml" ;
+				LASTREFRESH : mylastrefresh ;
+		}
+
+		stream<int32 mylastrefresh> ForceRefreshStream = Beacon()
+		{
+			param
+				period : 21600.0 ;
+			output
+				ForceRefreshStream : mylastrefresh = 1w ;
+		}
+
+		stream<int32 cdr_adsl_no, int64 totalDownloadsincelastBill, boolean refresh,
+			int32 DSL_QUOTA, int32 LIMITLI_LIMITSIZ, int32 PROD_OFR_ID>
+			CustomerDownloadStream = Functor(MatchedCDRStream)
+		{
+			logic
+				state :
+				{
+					list<rstring> [ 12 ] aylar = [ "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+						"JUL", "AGU", "SEP", "OCT", "NOW", "DEC" ] ;
+					mutable timestamp mynextbilldate ;
+					mutable uint32 mynextbillmonth ;
+					mutable boolean myrefresh ;
+					mutable map<int32, tuple<int64 accumulateddownload,
+						timestamp nextbilldate>> total ;
+				}
+
+				onTuple MatchedCDRStream :
+				{
+					myrefresh = false ;
+					if(cdr_adsl_no > 0)
+					{
+						if(!(cdr_adsl_no in total))
+						{
+							mynextbillmonth = gmmonth(getTimestamp()) ;
+							mynextbilldate = timeStringtoTimestamp(FATURA_GUNU + "-" + aylar [
+								mynextbillmonth ] + "-" +(rstring) gmyear(getTimestamp()),(rstring)
+								"00:00:00.000", "EET", false) ;
+							if(diffAsSecs(getTimestamp(), mynextbilldate) < 0.0)
+							{
+								mynextbillmonth += 1u ;
+								if(mynextbillmonth == 12u)
+								{
+									mynextbillmonth = 0u ;
+									mynextbilldate = timeStringtoTimestamp(FATURA_GUNU + "-" + aylar [ 0 ]
+										+ "-" +(rstring)(gmyear(getTimestamp()) + 1u),(rstring)
+										"00:00:00.000", "EET", false) ;
+								}
+
+								else
+								{
+									mynextbilldate = timeStringtoTimestamp(FATURA_GUNU + "-" + aylar [
+										mynextbillmonth ] + "-" +(rstring) gmyear(getTimestamp()),(rstring)
+										"00:00:00.000", "EET", false) ;
+								}
+
+							}
+
+							insertM(total, cdr_adsl_no, { accumulateddownload = cdr_cdownload,
+								nextbilldate = mynextbilldate }) ;
+							myrefresh = true ;
+						}
+
+						else
+						{
+							if(diffAsSecs(getTimestamp(), total [ cdr_adsl_no ].nextbilldate) < 0.0)
+							{
+								total [ cdr_adsl_no ].accumulateddownload += cdr_ddownload ;
+							}
+
+							else
+							{
+								mynextbillmonth = gmmonth(getTimestamp()) ;
+								mynextbilldate = timeStringtoTimestamp(FATURA_GUNU + "-" + aylar [
+									mynextbillmonth ] + "-" +(rstring) gmyear(getTimestamp()),(rstring)
+									"00:00:00.000", "EET", false) ;
+								if(diffAsSecs(getTimestamp(), mynextbilldate) < 0.0)
+								{
+									mynextbillmonth += 1u ;
+									if(mynextbillmonth == 12u)
+									{
+										mynextbillmonth = 0u ;
+										mynextbilldate = timeStringtoTimestamp(FATURA_GUNU + "-" + aylar [ 0
+											] + "-" +(rstring)(gmyear(getTimestamp()) + 1u),(rstring)
+											"00:00:00.000", "EET", false) ;
+									}
+
+									else
+									{
+										mynextbilldate = timeStringtoTimestamp(FATURA_GUNU + "-" + aylar [
+											mynextbillmonth ] + "-" +(rstring) gmyear(getTimestamp()),(rstring)
+											"00:00:00.000", "EET", false) ;
+									}
+
+								}
+
+								total [ cdr_adsl_no ].accumulateddownload = cdr_ddownload ;
+								total [ cdr_adsl_no ].nextbilldate = mynextbilldate ;
+								myrefresh = true ;
+							}
+
+						}
+
+					}
+
+				}
+
+			output
+				CustomerDownloadStream : totalDownloadsincelastBill = total [ cdr_adsl_no
+					].accumulateddownload, refresh = myrefresh ;
+		}
+
+		stream<int32 cdr_adsl_no, int64 totalDownloadsincelastBill, boolean refresh,
+			int32 DSL_QUOTA, int32 LIMITLI_LIMITSIZ, int32 PROD_OFR_ID, int32 AKN>
+			EnrichedDownloadStream = Join(AKNLookupSourceStream as inPort0Alias ;
+			CustomerDownloadStream as inPort1Alias)
+		{
+			window
+				inPort0Alias : sliding, count(1), partitioned ;
+				inPort1Alias : sliding, count(0) ;
+			param
+				partitionByLHS : inPort0Alias.PROD_OFR_ID ;
+				algorithm : rightOuter ;
+				equalityLHS : inPort0Alias.PROD_OFR_ID ;
+				equalityRHS : inPort1Alias.PROD_OFR_ID ;
+			output
+				EnrichedDownloadStream : AKN = AKNLookupSourceStream.AKN, 
+											PROD_OFR_ID = CustomerDownloadStream.PROD_OFR_ID ;
+		}
+
+		stream<int32 cdr_adsl_no, int64 totalDownloadsincelastBill, int32 DSL_QUOTA,
+			int32 LIMITLI_LIMITSIZ, int8 triggeralarm> DownloadAlertStream =
+			Functor(EnrichedDownloadStream)
+		{
+			logic
+				state :
+				{
+					mutable map<int32, tuple<boolean AKN, boolean Q80P, boolean Q100P>>
+						alarmhistory ;
+					mutable int8 mytriggeralarm ;
+				}
+
+				onTuple EnrichedDownloadStream :
+				{
+					mytriggeralarm = 0b ;
+					if((cdr_adsl_no > 0) && !(cdr_adsl_no in alarmhistory))
+					{
+						insertM(alarmhistory, cdr_adsl_no, { AKN = false, Q80P = false, Q100P =
+							false }) ;
+					}
+
+					if((cdr_adsl_no > 0) && refresh == true)
+					{
+						alarmhistory [ cdr_adsl_no ].AKN = false ;
+						alarmhistory [ cdr_adsl_no ].Q80P = false ;
+						alarmhistory [ cdr_adsl_no ].Q100P = false ;
+					}
+
+					// check if AKN is exceeded
+					if( alarmhistory [ cdr_adsl_no ].AKN == false )
+					{
+						if(totalDownloadsincelastBill >=(int64)(AKN * 1024 * 1024 * 1024))
+						{
+							mytriggeralarm = 1b ;
+							alarmhistory [ cdr_adsl_no ].AKN = true ;
+						}
+					}
+					
+					// if AKN is exceeded no need to check lower level alarms
+					// check if 100 percent of his quota is exceeded
+					if( (mytriggeralarm == 0b) && (LIMITLI_LIMITSIZ == 1w) && (alarmhistory [ cdr_adsl_no ].Q100P == false))
+					{
+						if(totalDownloadsincelastBill >=(int64)(DSL_QUOTA * 1024 * 1024 * 1024))
+						{
+							mytriggeralarm = 100b ;
+							alarmhistory [ cdr_adsl_no ].Q100P = true ;
+						}
+					}
+
+					// if AKN  or 100 percent alarm is exceeded no need to check lower level alarms
+					// check if 80 percent of his quota is exceeded
+					if( (mytriggeralarm == 0b) && (LIMITLI_LIMITSIZ == 1w) && (alarmhistory [ cdr_adsl_no ].Q100P == false) && (alarmhistory [ cdr_adsl_no ].Q80P == false))
+					{
+						if(totalDownloadsincelastBill >=(int64)(DSL_QUOTA * 1024 * 1024 * 1024 *
+							8 / 10))
+						{
+							mytriggeralarm = 80b ;
+							alarmhistory [ cdr_adsl_no ].Q80P = true ;
+						}
+					}
+
+				}
+
+				output
+					DownloadAlertStream : triggeralarm = mytriggeralarm ;
+			}
+
+	}

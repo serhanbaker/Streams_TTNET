@@ -1,0 +1,315 @@
+namespace application ;
+
+composite TTNetActiveSubscriberAlerts
+{
+
+/*
+ * Alert will be generated if the active  reduce at the rate of 30% 
+ * in the number of the active subscribers calculated on a DSLAM basis within 3 minutes. 
+ * The time and the percentile will be parametric. 
+ * The alert will include information such as the exchange, directorate, dslam ID, 
+ * date, the number of the subscribers before the fall starts. 
+ * If the number of active subscribers on a specific Redback or MPLS reduces 
+ * at the rate of 30% within 5 minutes, an alert will be shown on the screen. 
+ * Time and percentage will be parametrical.
+ * 
+ */
+	type
+		RadiusFormatted = 
+			rstring cdr_username, 
+			int32 cdr_adsl_no,
+			int8 cdr_acct_status_type, 
+			rstring cdr_event_timestamp,
+			int8 cdr_acct_status_type_II, 
+			int64 cdr_cdownload, 
+			int64 cdr_cupload,
+			int64 cdr_ddownload, 
+			int64 cdr_dupload, 
+			int8 cdr_dactive_subs, 
+			rstring R5001, 	// SERVER IP
+			int64   R5002, 	// SERVER PORT
+			rstring R5003, 	// CLIENT IP
+			int64   R5004, 	// CLIENT PORT
+			int64   R5005, 	// INITIATING SIDE
+			int64   R5006, 	// RADIUS PACKET CODE
+			int64	R5007, 	// RADIUS ID
+			rstring R1, 	// User-Name
+			int64	R40,	// Acct-Status-Type
+			rstring R20,	// Radius NAS-Identifier
+			rstring R4,		// NAS-IP-Address
+			rstring R8,		// Framed-IP-Address
+			rstring R9,		// Framed-IP-Netmask
+			rstring R48,	// Acct-Output-Packets
+			rstring R44,	// Acct-Session-Id
+			rstring R31,	// Calling-Station-Id
+			rstring R90,	// Tunnel Client Authentication ID
+			rstring R5200,	// QoS-Metering-Profile-Name-Down
+			rstring R5201,	// Forward-Policy
+			int64	R46,	// Acct-Session-Time
+			int64	R41,	// Acct-Delay-Time
+			int64	R49,	// Acct-Terminate-Cause
+			int64	R52,	// UPLOAD / Accounting Input Giga	?
+			int64	R51,	// DOWNLOAD / Acct-Link-Count ?
+			int64	R55,	// Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+			rstring R32	;	// NAS Identifier
+		BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO, rstring SERVIS,
+    		rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID, rstring URUN_STATUSU, rstring CUST_TP,int32 DSL_QUOTA,int32 LIMITLI_LIMITSIZ,
+    		int32 IS_NDSL,rstring CHURN_DATE,int32 IS_VIP, int32 IS_VIP_R, int32 IL_ID, 
+			int32 ILCE_ID, int32 MAHALLE_ID,  rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL,
+    		int32 DSLAM, rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI,
+			int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI,  int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI, 
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI, rstring FATURA_GUNU ;
+			
+	graph
+		(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> MatchedCDRStream) as
+			ImportMatchedCDRs = Import()
+		{
+			param
+				subscription : kind == "EnrichedCDR" && matchtype == "Matched" ;
+		}
+
+		(stream<rstring myKey, rstring myValue> ImportLiveParametersStream) as
+			ImportLiveParameters = Import()
+		{
+			param
+				subscription : kind == "LiveParameters" ;
+		}
+
+		(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> FilteredMatchedCDRStream) as
+			FilterCDRdSubs = Filter(MatchedCDRStream)
+		{
+			param
+				filter : cdr_dactive_subs != 0b ;
+		}
+
+		stream<int32 DSLAM, int32 status> DSLAMCUSTOMERLIST =
+			Functor(FilteredMatchedCDRStream)
+		{
+			logic
+				state :
+				{
+					mutable map<int32, tuple<int32 internalStatus>> dslamMap ;
+				}
+
+				onTuple FilteredMatchedCDRStream :
+				{
+					if(DSLAM in dslamMap)
+					{
+						dslamMap [ DSLAM ].internalStatus +=(int32) cdr_dactive_subs ;
+					}
+
+					else
+					{
+						insertM(dslamMap, DSLAM, { internalStatus =(int32)(cdr_dactive_subs >= 0b
+							? cdr_dactive_subs : 0b) }) ;
+					}
+
+				}
+
+			output
+				DSLAMCUSTOMERLIST : status = dslamMap [ DSLAM ].internalStatus ;
+		}
+
+		stream<int32 REDBACK_ID, int32 status> REDBACKCUSTOMERLIST =
+			Functor(FilteredMatchedCDRStream)
+		{
+			logic
+				state :
+				{
+					mutable map<int32, tuple<int32 internalStatus>> redbackMplsMap ;
+				}
+
+				onTuple FilteredMatchedCDRStream :
+				{
+					if(REDBACK_ID in redbackMplsMap)
+					{
+						redbackMplsMap [REDBACK_ID ].internalStatus +=(int32)
+							cdr_dactive_subs ;
+					}
+
+					else
+					{
+						insertM(redbackMplsMap,REDBACK_ID, { internalStatus =(int32)(cdr_dactive_subs >= 0b ? cdr_dactive_subs : 0b) }) ;
+					}
+
+				}
+
+			output
+				REDBACKCUSTOMERLIST : status = redbackMplsMap [ REDBACK_ID ].internalStatus ;
+		}
+
+		stream<int32 MPLS_ID, int32 status> MPLSCUSTOMERLIST =
+			Functor(FilteredMatchedCDRStream)
+		{
+			logic
+				state :
+				{
+					mutable map<int32, tuple<int32 internalStatus>> mplsMap ;
+				}
+
+				onTuple FilteredMatchedCDRStream :
+				{
+					if(MPLS_ID in mplsMap)
+					{
+						mplsMap [ MPLS_ID ].internalStatus +=(int32) cdr_dactive_subs ;
+					}
+
+					else
+					{
+						insertM(mplsMap, MPLS_ID, { internalStatus
+							=(int32)(cdr_dactive_subs >= 0b ? cdr_dactive_subs : 0b) }) ;
+					}
+
+				}
+
+			output
+				MPLSCUSTOMERLIST : status = mplsMap [ MPLS_ID ].internalStatus ;
+		}
+
+		stream<int32 DSLAM, int32 status, int32 maxStatus> DSLAMCUSTOMERGROUP =
+			Aggregate(DSLAMCUSTOMERLIST)
+		{
+			window
+				DSLAMCUSTOMERLIST : sliding, time((int32)
+					getSubmissionTimeValue("DSLAMAlertWindowSeconds", "180")), partitioned ;
+			param
+				partitionBy : DSLAM ;
+				aggregateIncompleteWindows : true ;
+			output
+				DSLAMCUSTOMERGROUP : maxStatus = Max(status) ;
+		}
+
+		stream<int32 REDBACK_ID, int32 status, int32 maxStatus>
+			REDBACKCUSTOMERGROUP = Aggregate(REDBACKCUSTOMERLIST)
+		{
+			window
+				REDBACKCUSTOMERLIST : sliding, time((int32)
+					getSubmissionTimeValue("REDBACKAlertWindowSeconds", "180")), partitioned ;
+			param
+				partitionBy : REDBACK_ID ;
+				aggregateIncompleteWindows : true ;
+			output
+				REDBACKCUSTOMERGROUP : maxStatus = Max(status) ;
+		}
+
+		stream<int32 MPLS_ID, int32 status, int32 maxStatus> MPLSCUSTOMERGROUP =
+			Aggregate(MPLSCUSTOMERLIST)
+		{
+			window
+				MPLSCUSTOMERLIST : sliding, time((int32)
+					getSubmissionTimeValue("MPLSAlertWindowSeconds", "180")), count(1),
+					partitioned ;
+			param
+				partitionBy : MPLS_ID ;
+				aggregateIncompleteWindows : true ;
+			output
+				MPLSCUSTOMERGROUP : maxStatus = Max(status) ;
+		}
+
+		stream<int32 DSLAM, int32 status, int32 maxStatus> DSLAMALERT =
+			Custom(DSLAMCUSTOMERGROUP ; ImportLiveParametersStream )
+		{
+			logic
+				state :
+				{
+					mutable float64 rate = 30.0 ;
+					mutable int32 sum ;
+				}
+
+				onTuple DSLAMCUSTOMERGROUP :
+				{
+					if(((float64) status /(float64) maxStatus) <= rate / 100.0)
+					{
+						submit(DSLAMCUSTOMERGROUP, DSLAMALERT) ;
+					}
+
+				}
+
+				onTuple ImportLiveParametersStream :
+				{
+					if (myKey == "DSLAMAlertRate")
+							rate = (float64) myValue ;
+				}
+
+		}
+
+		stream<int32 REDBACK_ID, int32 status, int32 maxStatus> REDBACKALERT =
+			Custom(REDBACKCUSTOMERGROUP ; ImportLiveParametersStream )
+		{
+			logic
+				state :
+				{
+					mutable float64 rate = 30.0 ;
+					mutable int32 sum ;
+				}
+
+				onTuple REDBACKCUSTOMERGROUP :
+				{
+					if(((float64) status /(float64) maxStatus) <= rate / 100.0)
+					{
+						submit(REDBACKCUSTOMERGROUP, REDBACKALERT) ;
+					}
+
+				}
+
+				onTuple ImportLiveParametersStream :
+				{
+					if (myKey == "REDBACKAlertRate")
+							rate = (float64) myValue ;
+				}
+
+		}
+
+		stream<int32 MPLS_ID, int32 status, int32 maxStatus> MPLSALERT =
+			Custom(MPLSCUSTOMERGROUP ; ImportLiveParametersStream )
+		{
+			logic
+				state :
+				{
+					mutable float64 rate = 30.0 ;
+					mutable int32 sum ;
+				}
+
+				onTuple MPLSCUSTOMERGROUP :
+				{
+					if(((float64) status /(float64) maxStatus) <= rate / 100.0)
+					{
+						submit(MPLSCUSTOMERGROUP, MPLSALERT) ;
+					}
+
+				}
+
+				onTuple ImportLiveParametersStream :
+				{
+					if (myKey == "MPLSAlertRate")
+							rate = (float64) myValue ;
+				}
+
+		}
+
+		() as FileSink_39 = FileSink(DSLAMALERT)
+		{
+			param
+				file : "DSLAM_Alarm_Ciktisi.txt" ;
+				format : csv ;
+		}
+
+		() as FileSink_40 = FileSink(REDBACKALERT)
+		{
+			param
+				file : "Redback_alarm_ciktisi.txt" ;
+				format : csv ;
+		}
+
+		() as FileSink_41 = FileSink(MPLSALERT)
+		{
+			param
+				file : "MPLS_Alarm_ciktisi.txt" ;
+				format : csv ;
+		}
+
+
+
+}

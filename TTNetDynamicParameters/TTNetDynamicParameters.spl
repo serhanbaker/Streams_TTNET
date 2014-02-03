@@ -1,0 +1,22 @@
+namespace application ;
+
+composite TTNetDynamicParameters
+{
+	graph
+		(stream<rstring myKey, rstring myValue> LiveParamtersStream) as LiveParamters = TCPSource()
+		{
+			param
+				role : server ;
+				format : csv ;
+				port : 1235u ;
+				reconnectionPolicy : InfiniteRetry ;
+		}
+
+		() as ExportLiveParamters = Export(LiveParamtersStream)
+		{
+			param
+				properties : { kind = "LiveParameters" } ;
+		}
+
+}
+

@@ -1,0 +1,49 @@
+namespace application ;
+
+use com.ibm.streams.db::ODBCEnrich ;
+
+composite TTNetEnrich
+{
+	type
+		BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO,
+			rstring SERVIS, rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID,
+			rstring URUN_STATUSU, rstring CUST_TP, int32 DSL_QUOTA,
+			int32 LIMITLI_LIMITSIZ, int32 IS_NDSL, rstring CHURN_DATE, int32 IS_VIP,
+			int32 IS_VIP_R, int32 IL_ID, int32 ILCE_ID, int32 MAHALLE_ID,
+			rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL, int32 DSLAM,
+			rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI, int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI, int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI,
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI,
+			rstring FATURA_GUNU ;
+	graph
+		
+		stream<BIG_DATA_DATAMART_TYPE> SubscriberLookupSourceStream =
+			ODBCEnrich(ForceRefreshStream )
+		{
+			param
+				connection : "BIGDATALOOKUP" ;
+				access : "enrichFromSubscriberLookup" ;
+				connectionDocument : "./etc/connections2.xml" ;
+				LASTREFRESH : mylastrefresh ;
+		}
+
+			
+					
+		stream<int32 mylastrefresh> ForceRefreshStream = Beacon()
+		{
+			param
+				period : 21600.0 ;
+				initDelay : 60.0 ;
+			output
+				ForceRefreshStream : mylastrefresh = 1w ;
+		}
+				() as ExportSubscriberLookup = Export(SubscriberLookupSourceStream)
+					{
+						param
+							properties : { kind = "SubscriberLookup" } ;
+					}
+
+
+
+			}

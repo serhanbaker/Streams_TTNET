@@ -120,7 +120,7 @@ composite TTNetNetworkAlerts
 
 		}
 
-		() as FileSink_42 = FileSink(MPLSALERT2)
+		() as FileSink_42 = FileSink(MPLSALERT2) //Write to Hbase-Hive
 		{
 			param
 				file : "MPLS_Alarm2_ciktisi.txt" ;
@@ -164,7 +164,7 @@ composite TTNetNetworkAlerts
 
 		}
 
-		() as FileSink_43 = FileSink(REDBACKALERT2)
+		() as FileSink_43 = FileSink(REDBACKALERT2) //Write to Hbase-Hive
 		{
 			param
 				file : "Redback_Alarm2_ciktisi.txt" ;

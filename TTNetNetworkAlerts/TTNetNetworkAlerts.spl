@@ -1,0 +1,175 @@
+namespace application ;
+
+composite TTNetNetworkAlerts
+{
+/*
+ * if there is a fall of 5000 active subscribers in any Redback or MPLS within 3 minutes,
+ * even if the disconnect ratio has not reached the 30% threshold, an alert will be triggered. 
+ * 
+ */
+	type
+		RadiusFormatted = 
+			rstring cdr_username, 
+			int32 cdr_adsl_no,
+			int8 cdr_acct_status_type, 
+			rstring cdr_event_timestamp,
+			int8 cdr_acct_status_type_II, 
+			int64 cdr_cdownload, 
+			int64 cdr_cupload,
+			int64 cdr_ddownload, 
+			int64 cdr_dupload, 
+			int8 cdr_dactive_subs, 
+			rstring R5001, 	// SERVER IP
+			int64   R5002, 	// SERVER PORT
+			rstring R5003, 	// CLIENT IP
+			int64   R5004, 	// CLIENT PORT
+			int64   R5005, 	// INITIATING SIDE
+			int64   R5006, 	// RADIUS PACKET CODE
+			int64	R5007, 	// RADIUS ID
+			rstring R1, 	// User-Name
+			int64	R40,	// Acct-Status-Type
+			rstring R20,	// Radius NAS-Identifier
+			rstring R4,		// NAS-IP-Address
+			rstring R8,		// Framed-IP-Address
+			rstring R9,		// Framed-IP-Netmask
+			rstring R48,	// Acct-Output-Packets
+			rstring R44,	// Acct-Session-Id
+			rstring R31,	// Calling-Station-Id
+			rstring R90,	// Tunnel Client Authentication ID
+			rstring R5200,	// QoS-Metering-Profile-Name-Down
+			rstring R5201,	// Forward-Policy
+			int64	R46,	// Acct-Session-Time
+			int64	R41,	// Acct-Delay-Time
+			int64	R49,	// Acct-Terminate-Cause
+			int64	R52,	// UPLOAD / Accounting Input Giga	?
+			int64	R51,	// DOWNLOAD / Acct-Link-Count ?
+			int64	R55,	// Event Timestamp, example;1390334086 ("Tue Jan 21 21:54:46 2014")
+			rstring R32	;	// NAS Identifier
+		BIG_DATA_DATAMART_TYPE = rstring KULLANICI_KIMLIK, int32 ADSL_NO, rstring SERVIS,
+    		rstring ADSL_SATIS_TARIHI, int32 PROD_OFR_ID, rstring URUN_STATUSU, rstring CUST_TP,int32 DSL_QUOTA,int32 LIMITLI_LIMITSIZ,
+    		int32 IS_NDSL,rstring CHURN_DATE,int32 IS_VIP, int32 IS_VIP_R, int32 IL_ID, 
+			int32 ILCE_ID, int32 MAHALLE_ID,  rstring BOLGE_ADI, rstring MUDURLUK, int32 SANTRAL,
+    		int32 DSLAM, rstring DSLAM_IP, int32 MPLS_ID, rstring MPLS_ADI,
+			int32 REDBACK_ID,
+			rstring SON_GERCEKLESEN_BI, rstring SON_GERCEKLESEN_BI_TARIHI,
+			rstring SON_NAKIL_TARIHI,  int32 IPTV_NO, rstring FIBER_MIGRATION_TARIHI, 
+			rstring SON_ARIZA_KAYDI_TARIHI, rstring SON_ARIZA_TIPI, rstring FATURA_GUNU ;
+						
+	graph
+		(stream<BIG_DATA_DATAMART_TYPE, RadiusFormatted> MatchedCDRStream) as ImportMatchedCDRs = Import()
+		{
+			param
+				subscription : kind == "EnrichedCDR" && matchtype == "Matched" ;
+		}
+
+		(stream<rstring myKey, rstring myValue> ImportLiveParametersStream) as
+			ImportLiveParameters = Import()
+		{
+			param
+				subscription : kind == "LiveParameters" ;
+		}
+		
+		stream<int32 MPLS_ID, int32 status, int32 REDBACK_ID> Filter_38_out0 =
+			Functor(MatchedCDRStream)
+		{
+			param
+				filter : cdr_acct_status_type_II in {2b,5b} ;
+					// Enumeration; 
+					// 1-Start,2-Stop,3-Interim,0-Other,
+					// 4-InterimWithMissingStart,5-StopWithMissingStartAndInterims,6-StartWithMissingStop
+			output
+				Filter_38_out0 : status = 1 ;
+					
+		}
+
+		stream<int32 MPLS_ID, int32 status, int32 mplsStopCount>
+			MPLSCUSTOMERGROUP2 = Aggregate(Filter_38_out0 as inPort0Alias)
+		{
+			window
+				inPort0Alias : sliding, time(180), count(10), partitioned ;
+			param
+				partitionBy : MPLS_ID ;
+				aggregateIncompleteWindows : true ;
+			output
+				MPLSCUSTOMERGROUP2 : mplsStopCount = Count() ;
+		}
+
+		stream<int32 MPLS_ID, int32 status, int32 mplsStopCount> MPLSALERT2 =
+			Custom(MPLSCUSTOMERGROUP2 ; ImportLiveParametersStream)
+		{
+			logic
+				state :
+				{
+					mutable int32 count = 5000 ;
+				}
+
+				onTuple MPLSCUSTOMERGROUP2 :
+				{
+					if(mplsStopCount >= count)
+					{
+						submit(MPLSCUSTOMERGROUP2, MPLSALERT2) ;
+					}
+
+				}
+
+				onTuple ImportLiveParametersStream :
+				{
+					if (myKey == "MPLSAlertCount")
+							count = (int32) myValue ;
+				}
+
+		}
+
+		() as FileSink_42 = FileSink(MPLSALERT2)
+		{
+			param
+				file : "MPLS_Alarm2_ciktisi.txt" ;
+				format : csv ;
+		}
+
+		stream<int32 REDBACK_ID, int32 status, int32 redbackCount>
+			REDBACKCUSTOMERGROUP2 = Aggregate(Filter_38_out0 as inPort0Alias)
+		{
+			window
+				inPort0Alias : sliding, time(180), partitioned ;
+			param
+				partitionBy : REDBACK_ID ;
+			output
+				REDBACKCUSTOMERGROUP2 : redbackCount = Count() ;
+		}
+
+		stream<int32 REDBACK_ID, int32 status, int32 redbackCount> REDBACKALERT2 =
+			Custom(REDBACKCUSTOMERGROUP2 ; ImportLiveParametersStream)
+		{
+			logic
+				state :
+				{
+					mutable int32 count = 5000 ;
+				}
+
+				onTuple REDBACKCUSTOMERGROUP2 :
+				{
+					if(redbackCount >= count)
+					{
+						submit(REDBACKCUSTOMERGROUP2, REDBACKALERT2) ;
+					}
+
+				}
+				
+				onTuple ImportLiveParametersStream :
+				{
+					if (myKey == "REDBACKAlertCount")
+							count = (int32) myValue ;
+				}
+
+		}
+
+		() as FileSink_43 = FileSink(REDBACKALERT2)
+		{
+			param
+				file : "Redback_Alarm2_ciktisi.txt" ;
+				format : csv ;
+		}
+
+
+}

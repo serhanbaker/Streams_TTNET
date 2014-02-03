@@ -159,7 +159,7 @@ composite TTNetActiveSubscriberAlerts
 					else
 					{
 						insertM(mplsMap, MPLS_ID, { internalStatus
-							=(int32)(cdr_dactive_subs >= 0b ? cdr_dactive_subs : 0b) }) ;
+							=(int32)(cdr_dactive_subs >= 0b ? cdr_dactive_subs : 0b) }) ; // assign each other?
 					}
 
 				}

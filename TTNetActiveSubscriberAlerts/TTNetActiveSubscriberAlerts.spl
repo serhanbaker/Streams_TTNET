@@ -289,21 +289,21 @@ composite TTNetActiveSubscriberAlerts
 
 		}
 
-		() as FileSink_39 = FileSink(DSLAMALERT)
+		() as FileSink_39 = FileSink(DSLAMALERT) //Hive-Hbase
 		{
 			param
 				file : "DSLAM_Alarm_Ciktisi.txt" ;
 				format : csv ;
 		}
 
-		() as FileSink_40 = FileSink(REDBACKALERT)
+		() as FileSink_40 = FileSink(REDBACKALERT) //Hive-Hbase
 		{
 			param
 				file : "Redback_alarm_ciktisi.txt" ;
 				format : csv ;
 		}
 
-		() as FileSink_41 = FileSink(MPLSALERT)
+		() as FileSink_41 = FileSink(MPLSALERT) //Hive-Hbase
 		{
 			param
 				file : "MPLS_Alarm_ciktisi.txt" ;
